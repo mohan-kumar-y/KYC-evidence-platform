@@ -145,6 +145,18 @@ class AppTest(unittest.TestCase):
         ex = self.call("GET", "/api/exceptions")[1]
         self.assertEqual({k: v for k, v in ex["by_category"].items() if k != "BUSINESS_RULE"}, {}, [f for f in ex["findings"] if f["category"] != "BUSINESS_RULE"])
 
+    def test_10_report_command_snapshots_live_db(self):
+        import contextlib
+        import io
+        from argparse import Namespace
+        from kyc import cli
+        out = Path(self.tmp.name) / "rep"
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_report(Namespace(db=str(Path(self.tmp.name) / "app.db"), data=str(ROOT / "data" / "starter"), as_of=None, out=str(out)))
+        self.assertEqual(code, 0)
+        self.assertIn("PASS", (out / "validation_summary.md").read_text())
+        self.assertTrue((out / "csv" / "customer.csv").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,9 @@ expiry alerts -> check the Exceptions tab**, which runs the full validator on th
 Errors are JSON `{"error":{"code","message"}}` with 400/403/404/405/409/422 as appropriate (duplicate document,
 invalid review transition, ownership > 100%, missing resolution, role not allowed).
 
+Step-by-step test script, report generation and regeneration: **`docs/TESTING_GUIDE.md`**.
+`python run.py report` writes validation reports and CSVs of the live app database to `reports_live/`.
+
 ## Quick start
 
 Requires Python 3.9+ (developed and tested on 3.13; nothing to install).
@@ -40,7 +43,7 @@ Requires Python 3.9+ (developed and tested on 3.13; nothing to install).
 ```bash
 python run.py all --profile full          # 8,000 customers / 20,000 documents / 3,000 reviews  (~8 s)
 python run.py all --profile starter       # 400 customers / 1,000 documents / 150 reviews        (<1 s)
-python -m unittest discover -s tests -v   # 43 tests (acceptance, boundaries, validator mutation tests, end-to-end HTTP app tests)
+python -m unittest discover -s tests -v   # 44 tests (acceptance, boundaries, validator mutation tests, end-to-end HTTP app tests)
 python run.py repro --profile full        # regenerate twice, compare row counts + SHA-256 of every file
 python run.py trace CUS-000007            # full evidence / decision / alert / audit story for one customer
 ```

@@ -175,6 +175,53 @@ def cmd_serve(a):
     return 0
 
 
+def cmd_report(a):
+    """Snapshot the live application database: validation reports + CSV export of every table."""
+    import csv
+    from .service import Service
+
+    data = Path(a.data)
+    as_of = parse_date(a.as_of) if a.as_of else parse_date(json.loads((data / "manifest.json").read_text(encoding="utf-8"))["meta"]["as_of_date"])
+    if not Path(a.db).exists():
+        print(f"database {a.db} not found - run `python run.py serve` first and make some changes")
+        return 2
+    svc = Service(a.db, as_of)
+    row = svc.one("SELECT MAX(d) m FROM (SELECT MAX(decision_date) d FROM customer_decision UNION SELECT MAX(verified_on) FROM verification UNION SELECT MAX(submitted_on) FROM document)")
+    if row and row["m"] and as_of < parse_date(row["m"]):
+        as_of = parse_date(row["m"])  # the app was moved forward: report at the latest business date
+        svc.set_as_of(as_of.isoformat(), "USR-ADM-001")
+    out = Path(a.out)
+    (out / "csv").mkdir(parents=True, exist_ok=True)
+    ex = svc.exceptions()
+    (out / "validation_report.json").write_text(json.dumps(ex, indent=1, default=str), encoding="utf-8")
+    cols = ["finding_id", "rule_code", "category", "severity", "entity_type", "entity_id", "related_entity_id", "customer_id", "detail"]
+    with open(out / "validation_findings.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(ex["findings"])
+    summ = svc.summary()
+    lines = [f"# Live application report @ {ex['as_of_date']}", "",
+             f"* Customers: {summ['customers_total']} {summ['customers']}", f"* Documents: {summ['documents']}",
+             f"* Reviews: {summ['reviews']} (overdue {summ['reviews_overdue']})", f"* Active alerts: {summ['alerts_open']} {summ['alerts_by_type']}",
+             f"* Audit events: {summ['audit_events']}", "", "## Validator findings by category", ""]
+    lines += [f"* {k}: {v}" for k, v in sorted(ex["by_category"].items())] or ["* none"]
+    lines += ["", "## By rule", ""] + [f"* {k}: {v}" for k, v in sorted(ex["by_rule"].items())]
+    bad = {k: v for k, v in ex["by_category"].items() if k != "BUSINESS_RULE"}
+    lines += ["", "**RESULT:** " + ("PASS - no integrity or reconciliation defects (business-rule exceptions are listed for follow-up)." if not bad else f"FAIL - {bad}")]
+    (out / "validation_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for t in svc.tables:
+        names = [c["name"] for c in t["columns"]] if "columns" in t else None
+        rows = svc.q(f"SELECT * FROM {t['name']} ORDER BY " + ",".join(t["order"]))
+        with open(out / "csv" / f"{t['name']}.csv", "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            hdr = list(rows[0].keys()) if rows else (names or [])
+            w.writerow(hdr)
+            w.writerows([[r[k] for k in hdr] for r in rows])
+    print((out / "validation_summary.md").read_text(encoding="utf-8"))
+    print(f"written to {out}/ (validation_summary.md, validation_findings.csv, validation_report.json, csv/<table>.csv)")
+    return 0 if not bad else 1
+
+
 def cmd_dictionary(a):
     tables = build_tables(load_policy())
     p = ROOT / "docs" / "DATA_DICTIONARY.md"
@@ -211,6 +258,11 @@ def main(argv=None):
     p.add_argument("--data", default=str(DEFAULT_OUT / "full"))
     p.add_argument("--truth", action="store_true", help="also show ground-truth labels (evaluation only)")
     sub.add_parser("dictionary", help="regenerate docs/DATA_DICTIONARY.md")
+    p = sub.add_parser("report", help="validation report + CSV export of the LIVE application database")
+    p.add_argument("--db", default=str(ROOT / "kyc_app.db"))
+    p.add_argument("--data", default=str(DEFAULT_OUT / "starter"), help="dataset the db was seeded from (for the default as-of date)")
+    p.add_argument("--as-of", default=None)
+    p.add_argument("--out", default=str(ROOT / "reports_live"))
     p = sub.add_parser("serve", help="run the working application (browser UI + JSON API) on a generated dataset")
     p.add_argument("--data", default=str(DEFAULT_OUT / "starter"), help="dataset directory (default data/starter; use data/full for the full set)")
     p.add_argument("--db", default=str(ROOT / "kyc_app.db"), help="working SQLite file (created from seed.sql if missing)")
@@ -224,7 +276,7 @@ def main(argv=None):
         out = Path(a.out) if a.out else DEFAULT_OUT / a.profile
         m = build(a, out)
         return 0 if m["validation_passed"] else 1
-    return {"validate": cmd_validate, "repro": cmd_repro, "trace": cmd_trace, "dictionary": cmd_dictionary, "serve": cmd_serve}[a.cmd](a)
+    return {"validate": cmd_validate, "repro": cmd_repro, "trace": cmd_trace, "dictionary": cmd_dictionary, "serve": cmd_serve, "report": cmd_report}[a.cmd](a)
 
 
 if __name__ == "__main__":
