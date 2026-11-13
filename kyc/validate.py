@@ -228,9 +228,16 @@ def validate(T, tables, policy, as_of: date):
         return rules.evaluate(c, sorted(ratings_by[cid], key=lambda x: x["effective_from"]), docs_by.get(cid, []), vers_by,
                               links_by.get(cid, []), kyc_rows, t, needs_owner[c["customer_type_id"]])
 
+    last_of_day = {}
+    for dcs in T["customer_decision"]:
+        k = (dcs["customer_id"], dcs["decision_date"])
+        if k not in last_of_day or dcs["decision_id"] > last_of_day[k]:
+            last_of_day[k] = dcs["decision_id"]
     for dcs in T["customer_decision"]:
         if dcs["customer_id"] not in cust:
             continue
+        if last_of_day[(dcs["customer_id"], dcs["decision_date"])] != dcs["decision_id"]:
+            continue  # intra-day intermediate state, legitimately superseded by a later same-day decision
         e = snap(dcs["customer_id"], dcs["decision_date"])
         if e is None:
             continue
@@ -270,8 +277,16 @@ def validate(T, tables, policy, as_of: date):
         if (a["trigger_date"], a["lead_days"], cls, a["severity"], a["resolved_on"]) != (ex["trigger_date"], ex["lead_days"], ex["closure"], sev, ex["closed_on"]):
             F.add("ALERT_MISMATCH", "RECONCILIATION", "ERROR", "alert", a["alert_id"], a["customer_id"], f"expected trigger={ex['trigger_date']} lead={ex['lead_days']} closure={ex['closure']}")
     exp_keys = {e["dedupe_key"] for e in expected}
+    tighter = {}  # (doc, expiry) -> smallest expected lead; earlier, wider escalations may legitimately remain, closed
+    for e in expected:
+        if e["alert_type"] == "DOCUMENT_EXPIRING":
+            kk = e["dedupe_key"].rsplit("|", 1)[0]
+            tighter[kk] = min(tighter.get(kk, 10 ** 6), e["lead_days"])
     for k, a in have_alerts.items():
         if k not in exp_keys:
+            if (a["alert_type"] == "DOCUMENT_EXPIRING" and a["status"] == "SUPERSEDED"
+                    and tighter.get(k.rsplit("|", 1)[0], 10 ** 6) < (a["lead_days"] or 0)):
+                continue
             F.add("ALERT_UNEXPECTED", "RECONCILIATION", "ERROR", "alert", a["alert_id"], a["customer_id"], "no rule produces this alert")
     # arithmetic: duplicated review per customer-year
     seen = Counter((r["customer_id"], r["review_id"][-4:]) for r in T["review_case"])
@@ -296,7 +311,7 @@ def validate(T, tables, policy, as_of: date):
             bps, n = rules.ownership_state(links_by.get(cid, []), as_of)
             if n and bps > 10000:
                 F.add("OWNERSHIP_OVER_100", "BUSINESS_RULE", "HIGH", "customer", cid, cid, f"effective ownership {bps / 100:.2f}%")
-            elif n and bps < 10000:
+            elif n and bps < 10000 and c["status"] != "PENDING":  # PENDING onboarding may still be collecting owners
                 F.add("OWNERSHIP_UNDER_100", "RECONCILIATION", "ERROR", "customer", cid, cid, f"effective ownership {bps / 100:.2f}%")
             elif n == 0 and c["status"] == "APPROVED":
                 F.add("APPROVED_WITHOUT_OWNERSHIP", "RECONCILIATION", "ERROR", "customer", cid, cid, "approved business has no ownership records")

@@ -141,6 +141,40 @@ def cmd_trace(a):
     return 0
 
 
+def cmd_serve(a):
+    """Start the application on a working copy of the SQL seed (created on first run)."""
+    import shutil as _sh
+    from .server import serve
+    from .service import Service
+
+    data = Path(a.data)
+    db = Path(a.db)
+    if a.reset and db.exists():
+        db.unlink()
+    if not db.exists():
+        seed = data / "operational" / "sql" / "seed.sql"
+        if not seed.exists():
+            print(f"{seed} not found - generating the {data.name} dataset first ...")
+            ns = argparse.Namespace(cmd="all", profile=data.name if data.name in ("starter", "full") else "starter",
+                                    seed=load_generation_cfg()["default_seed"], as_of=parse_date(load_generation_cfg()["default_as_of_date"]),
+                                    customers=None, businesses=None, documents=None, reviews=None)
+            build(ns, data, quiet=True)
+        conn = sqlite3.connect(str(db))
+        conn.executescript(seed.read_text(encoding="utf-8"))
+        conn.close()
+        print(f"created working database {db} from {seed}")
+    as_of = parse_date(json.loads((data / "manifest.json").read_text(encoding="utf-8"))["meta"]["as_of_date"])
+    svc = Service(str(db), as_of)
+    httpd = serve(svc, a.host, a.port, verbose=a.verbose)
+    print(f"KYC Evidence Platform running at http://{a.host}:{a.port}/   (business date {as_of}; Ctrl+C to stop)")
+    print(f"API examples: http://{a.host}:{a.port}/api/summary   http://{a.host}:{a.port}/api/customers/CUS-000001")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    return 0
+
+
 def cmd_dictionary(a):
     tables = build_tables(load_policy())
     p = ROOT / "docs" / "DATA_DICTIONARY.md"
@@ -177,13 +211,20 @@ def main(argv=None):
     p.add_argument("--data", default=str(DEFAULT_OUT / "full"))
     p.add_argument("--truth", action="store_true", help="also show ground-truth labels (evaluation only)")
     sub.add_parser("dictionary", help="regenerate docs/DATA_DICTIONARY.md")
+    p = sub.add_parser("serve", help="run the working application (browser UI + JSON API) on a generated dataset")
+    p.add_argument("--data", default=str(DEFAULT_OUT / "starter"), help="dataset directory (default data/starter; use data/full for the full set)")
+    p.add_argument("--db", default=str(ROOT / "kyc_app.db"), help="working SQLite file (created from seed.sql if missing)")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--reset", action="store_true", help="discard the working database and start again from the seed")
+    p.add_argument("--verbose", action="store_true")
 
     a = ap.parse_args(argv)
     if a.cmd in ("all", "generate"):
         out = Path(a.out) if a.out else DEFAULT_OUT / a.profile
         m = build(a, out)
         return 0 if m["validation_passed"] else 1
-    return {"validate": cmd_validate, "repro": cmd_repro, "trace": cmd_trace, "dictionary": cmd_dictionary}[a.cmd](a)
+    return {"validate": cmd_validate, "repro": cmd_repro, "trace": cmd_trace, "dictionary": cmd_dictionary, "serve": cmd_serve}[a.cmd](a)
 
 
 if __name__ == "__main__":

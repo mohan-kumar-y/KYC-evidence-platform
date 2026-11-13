@@ -1,12 +1,37 @@
-# KYC Evidence Platform - synthetic data generator, rules engine & validator
+# KYC Evidence Platform - working application, synthetic data, rules engine & validator
 
 Tracks onboarding evidence, validates completeness, and manages periodic reviews and expiries for a KYC/CDD
-workflow - delivered as a **deterministic synthetic-data platform** with a documented rules engine, an
-independent validator, labelled edge cases and a separate ground truth.
+workflow. It is a **working application** (browser UI + JSON API over SQLite) running on a **deterministic
+synthetic dataset**, with a documented rules engine, an independent validator, labelled edge cases and a
+separate ground truth.
 
 * **Zero dependencies** - Python standard library only (no pip install, no Docker, no database server).
 * **One command** produces CSV + JSON + SQL, ground truth, validation report, metrics and checksums.
 * **Reproducible** - fixed seed `20261022`; regenerating twice gives byte-identical files (proved by `repro`).
+
+## Run the application (nothing to install)
+
+```bash
+python run.py serve                 # starter dataset, http://127.0.0.1:8000/
+python run.py serve --data data/full --db kyc_full.db     # 8,000-customer dataset
+python run.py serve --reset         # throw away changes, start again from the seed
+```
+
+Open the URL. Pick who you are in the top bar (analyst / reviewer / admin), then follow the workflow:
+**onboard a customer -> submit documents -> verify -> completeness is re-evaluated and an append-only decision is
+recorded -> schedule/advance periodic reviews -> move the business date forward and run the daily batch to raise
+expiry alerts -> check the Exceptions tab**, which runs the full validator on the live database.
+
+| Area | Endpoints (header `X-Actor: USR-...` selects the user; roles enforced) |
+|---|---|
+| Customers | `GET/POST /api/customers`, `GET /api/customers/{id}`, `POST .../documents`, `.../evaluate`, `.../owners`, `.../reviews` |
+| Verification | `POST /api/documents/{doc_id}/verify` |
+| Reviews | `GET /api/reviews`, `POST /api/reviews/{id}/transition` (resolution mandatory to complete) |
+| Alerts | `GET /api/alerts`, `POST /api/alerts/{id}/acknowledge`, `POST /api/admin/alerts/scan` (idempotent) |
+| Operations | `POST /api/system/as-of`, `POST /api/admin/daily-run`, `GET /api/summary`, `/api/audit-events`, `/api/exceptions` |
+
+Errors are JSON `{"error":{"code","message"}}` with 400/403/404/405/409/422 as appropriate (duplicate document,
+invalid review transition, ownership > 100%, missing resolution, role not allowed).
 
 ## Quick start
 
@@ -15,7 +40,7 @@ Requires Python 3.9+ (developed and tested on 3.13; nothing to install).
 ```bash
 python run.py all --profile full          # 8,000 customers / 20,000 documents / 3,000 reviews  (~8 s)
 python run.py all --profile starter       # 400 customers / 1,000 documents / 150 reviews        (<1 s)
-python -m unittest discover -s tests -v   # 34 tests (acceptance, boundaries, validator mutation tests)
+python -m unittest discover -s tests -v   # 43 tests (acceptance, boundaries, validator mutation tests, end-to-end HTTP app tests)
 python run.py repro --profile full        # regenerate twice, compare row counts + SHA-256 of every file
 python run.py trace CUS-000007            # full evidence / decision / alert / audit story for one customer
 ```
@@ -92,6 +117,7 @@ run.py                 entry point
 config/policy.json     business policy: requirements by customer type & risk, review cycles, alert lead times, enums, state machines
 config/generation.json scale profiles + distribution knobs (probabilities, windows)
 kyc/                   schema.py  rules.py  generator.py  anomalies.py  validate.py  export.py  reports.py  cli.py ...
+                       service.py (workflow commands/queries)  server.py (HTTP API)  static/index.html (browser UI)
 tests/                 acceptance, boundary and mutation tests
 data/starter, data/full  committed outputs
 docs/                  design, dictionary, acceptance matrix, reproducibility

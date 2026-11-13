@@ -26,3 +26,4 @@
 | 22 | Regenerate twice and compare counts/checksums | `python run.py repro` | `docs/REPRODUCIBILITY.md` |
 | 23 | Acceptance: completeness matches type; expiry alerts at lead times; ownership reconciles; every exception traceable | rules + validator + `python run.py trace <customer> --truth` | tests + findings link rule, entity and customer ids |
 | 24 | Lawful provenance | fully synthetic, `source_manifest.json` | no external data |
+| 25 | Working end-to-end workflow (onboard, evidence, verification, completeness decision, reviews, expiry alerts, audit, exceptions) | `python run.py serve` (UI + API) | `tests/test_app.py` (9 HTTP tests) |

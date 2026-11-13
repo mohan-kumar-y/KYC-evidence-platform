@@ -1,5 +1,6 @@
-__pycache__/
+*.db
 *.pyc
 .pytest_cache/
-*.db
 .venv/
+__pycache__/
+kyc_app.db
